@@ -2,14 +2,13 @@ import functools
 import logging
 import os
 from pathlib import Path
-from typing import Generator, List, Iterable
+from typing import List, Iterable
 
-import attr
 import cv2 as cv
 import numpy as np
 
-IMG_IN = "img"
-DEBUG_OUT = "debug"
+from boggler.data import DEBUG_OUT, ProcessedImage
+
 PIX_CONSTANTS = {
     "open_close_kernel": 5,
     "bbox_min": 80,
@@ -25,16 +24,6 @@ STORE_COMPONENTS = True
 """Store copies of bounding box contents along with ProcessedImages"""
 
 LOG = logging.getLogger(__name__)
-
-
-def read_images(partition="dev", ground_truth=False) -> Generator:
-    for fname in os.listdir(os.path.join(IMG_IN, partition)):
-        fpath = os.path.join(IMG_IN, partition, fname)
-        if not fname.endswith(".jpg"):
-            continue
-        if ground_truth:
-            raise NotImplementedError()
-        yield cv.imread(cv.samples.findFile(fpath))
 
 
 def bw(img: np.ndarray) -> np.ndarray:
@@ -65,13 +54,6 @@ def open_close(img: np.ndarray) -> np.ndarray:
     opened = cv.morphologyEx(img, cv.MORPH_OPEN, kernel)
     closed = cv.morphologyEx(opened, cv.MORPH_CLOSE, kernel)
     return closed
-
-
-@attr.s()
-class ProcessedImage:
-    orig: np.ndarray = attr.ib()
-    overlay: np.ndarray = attr.ib()
-    metadata: dict = attr.ib(factory=dict)
 
 
 def bbox(proc_img: ProcessedImage, store_components=True) -> ProcessedImage:

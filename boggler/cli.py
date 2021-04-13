@@ -2,7 +2,9 @@ import click
 import cv2 as cv
 import logging
 
-from boggler.img import read_images, preproc, extract, write_proc_images
+from boggler.img import preproc, extract, write_proc_images
+from boggler.annotate import label_all
+from boggler.data import read_images, FEATURES
 
 
 @click.group()
@@ -19,8 +21,10 @@ def seg(interactive):
         if interactive:
             cv.imshow("Display window", img)
             k = cv.waitKey(0)
+            print(k)
 
 @cli.command()
-def annotate():
-    raise NotImplementedError()
+@click.option("-f", "--feats-dir", default=FEATURES)
+def annotate(feats_dir):
+    label_all(feats_dir)
 
