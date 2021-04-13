@@ -7,7 +7,7 @@ setup(
     version="1.0",
     long_description=__doc__,
     packages=find_packages(),
-    entry_points={"console_scripts": ['boggler=boggler.cli:main']},
+    entry_points={"console_scripts": ['boggler=boggler.cli:cli']},
     include_package_data=True,
     zip_safe=False,
     install_requires=req,
