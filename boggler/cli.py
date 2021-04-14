@@ -17,9 +17,10 @@ def cli(verbose):
 
 @cli.command()
 @click.option("-i", "--interactive", is_flag=True, default=False)
-def seg(interactive):
+@click.option("-s", "--store-components", is_flag=True, default=False)
+def seg(interactive, store_components):
     origim = read_images()
-    for pimg in write_proc_images(extract(preproc(read_images()))):
+    for pimg in write_proc_images(extract(preproc(read_images(), store_components))):
         img = pimg.img
         if interactive:
             LOG.info(f"{len(pimg.metadata['improved_bbox'])} bboxes found")

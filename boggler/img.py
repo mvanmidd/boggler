@@ -93,12 +93,15 @@ def combine_overlapping_bbox(proc_img: ProcessedImage, store_components=True) ->
     """Yeah, it's probably n^2. Also mutates proc_img.metadata["bbox"]. Watch out.
 
     Horrendous duplicate-the-list hack courtesy of
-    https://answers.opencv.org/question/204530/merge-overlapping-rectangles/.
+    https://answers.opencv.org/question/204530/merge-overlapping-rectangles/ and a bunch of sketchy stackoverflows.
 
     """
     bbox = proc_img.metadata["bbox"]
-    # magic numbers, here be dragons.
+    # magic number epsilon, here be dragons. eps 0 -> no grouping, eps inf -> single group
     grouped_bbox, weights = cv.groupRectangles(bbox + bbox, groupThreshold=1, eps=0.2)
+    proc_img.img = proc_img.orig.copy()
+    for x, y, w, h in grouped_bbox:
+        cv.rectangle(proc_img.img, (x, y), (x + w, y + h), (200, 0, 0), 4)
     LOG.info(f"Combined {len(bbox) - len(grouped_bbox)} duplicate bounding boxes")
     proc_img.metadata["bbox"] = grouped_bbox
     return proc_img
@@ -167,6 +170,12 @@ def gridify(proc_img: ProcessedImage) -> ProcessedImage:
     """Take a rectified + cropped ProcessedImage and fit an NxN grid, N == 4, 5, or 6 based on num bboxes."""
     nguess = min([4, 5, 6], key=lambda n: abs(n * n - len(proc_img.metadata["improved_bbox"])))
     LOG.info(f"Guessing that this is {nguess} x {nguess} board")
+    imsize = np.shape(proc_img.img)[0] # must be square image by this point
+    gridspace = imsize // nguess
+    for x in range(0, imsize, gridspace):
+        cv.line(proc_img.img, (x, 0), (x, imsize), color=(200, 0, 0), thickness=6)
+    for y in range(0, imsize, gridspace):
+        cv.line(proc_img.img, (0, y), (imsize, y), color=(200, 0, 0), thickness=6)
     return proc_img
 
 
@@ -197,9 +206,23 @@ def compose(*functions):
     return functools.reduce(lambda f, g: lambda x: f(g(x)), reversed(functions), lambda x: x)
 
 
-def preproc(imgs: Iterable[np.ndarray]) -> Iterable[np.ndarray]:
-    for img in imgs:
-        yield compose(*PREPROC_PIPELINE)(img)
+def preproc(imgs: Iterable[np.ndarray], store_components=False) -> Iterable[np.ndarray]:
+    if store_components:
+        yield from _preproc_debug(imgs)
+    else:
+        for img in imgs:
+            yield compose(*PREPROC_PIPELINE)(img)
+
+
+def _preproc_debug(imgs: Iterable[np.ndarray], output_root: str = DEBUG_OUT) -> Iterable[np.ndarray]:
+    for i, img in enumerate(imgs):
+        this_root = os.path.join(output_root, f"{i:03d}", "preprocessing")
+        Path(this_root).mkdir(parents=True, exist_ok=True)
+        cv.imwrite(os.path.join(this_root, "orig.jpg"), img)
+        for j, preproc_step in enumerate(PREPROC_PIPELINE):
+            img = preproc_step(img)
+            cv.imwrite(os.path.join(this_root, f"preproc_{j:02d}_{preproc_step.__name__}.jpg"), img)
+        yield img
 
 
 def write_proc_images(imgs: Iterable[ProcessedImage], output_root: str = DEBUG_OUT):
@@ -221,10 +244,10 @@ def write_proc_images(imgs: Iterable[ProcessedImage], output_root: str = DEBUG_O
 def extract(imgs: Iterable[np.ndarray], store_components=True) -> Iterable[ProcessedImage]:
     for i, img in enumerate(imgs):
         proc = ProcessedImage(img, img, {})
-        for extract_step in EXTRACT_PIPELINE:
+        for j, extract_step in enumerate(EXTRACT_PIPELINE):
             this_proc = extract_step(proc)
             if store_components:
-                cv.imwrite(os.path.join(DEBUG_OUT, f"{i:03d}_{extract_step.__name__}.jpg"), this_proc.img)
+                cv.imwrite(os.path.join(DEBUG_OUT, f"{i:03d}_{j:02d}_{extract_step.__name__}.jpg"), this_proc.img)
             # proc.metadata.update(this_proc.metadata)
             proc = this_proc
         yield proc
