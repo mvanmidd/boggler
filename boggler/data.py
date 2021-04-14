@@ -12,14 +12,15 @@ GROUND_TRUTH = "groundtruth"
 FEATURES = "features"
 
 
-def read_images(root=IMG_IN, partition="dev", ground_truth=False) -> Generator:
-    for fname in os.listdir(os.path.join(root, partition)):
-        fpath = os.path.join(root, partition, fname)
-        if not fname.endswith(".jpg"):
-            continue
-        if ground_truth:
-            raise NotImplementedError()
-        yield cv.imread(fpath)
+def read_images(root=IMG_IN, partition="", ground_truth=False) -> Generator:
+    for dirpath, dnames, fnames in os.walk(os.path.join(root, partition)):
+        for fname in fnames:
+            fpath = os.path.join(dirpath, fname)
+            if not fname.endswith(".jpg"):
+                continue
+            if ground_truth:
+                raise NotImplementedError()
+            yield cv.imread(fpath)
 
 
 
@@ -30,8 +31,8 @@ class ProcessedImage:
     metadata: dict = attr.ib(factory=dict)
 
 
-LABELS = ["er", "qu", "!", "?"]  + list(c for c in string.ascii_lowercase if c != "q")
-LABELS_KEYSTROKES = {"E": "er", "q": "qu", "!": "!", "?": "?"}
+LABELS = ["in", "he", "th", "er", "qu", "an", "!", "?"]  + list(c for c in string.ascii_lowercase if c != "q")
+LABELS_KEYSTROKES = {"I": "in", "H": "he", "T": "th", "E": "er", "Q": "qu", "A": "an", "!": "!", "?": "?"}
 LABELS_KEYSTROKES.update({k: k for k in string.ascii_lowercase if k != "q"})
 
 @attr.s()

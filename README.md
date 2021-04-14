@@ -60,7 +60,7 @@ Then, using the number of pruned bounding boxes, we guess at the board size (4, 
  and gridify the reshaped image:
 ![gridify](static/img/000_05_gridify.jpg)
 
-Finally, we extract the individual grid cells and write them as images in `debug/{img_number}/img_feat_{y}{x}.jpg`
+Finally, we extract the individual grid cells and write them as images in `features/{img_number}/{y}{x}.jpg`
 ![gridfeat](static/img/gridfeat.jpg)
 
 ## Data labeling
