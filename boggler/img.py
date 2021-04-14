@@ -88,27 +88,87 @@ def bbox(proc_img: ProcessedImage, store_components=True) -> ProcessedImage:
         meta["img_bbox"] = components
     return ProcessedImage(img, overlay, meta)
 
+
+def combine_overlapping_bbox(proc_img: ProcessedImage, store_components=True) -> ProcessedImage:
+    """Yeah, it's probably n^2. Also mutates proc_img.metadata["bbox"]. Watch out.
+
+    Horrendous duplicate-the-list hack courtesy of
+    https://answers.opencv.org/question/204530/merge-overlapping-rectangles/.
+
+    """
+    bbox = proc_img.metadata["bbox"]
+    # magic numbers, here be dragons.
+    grouped_bbox, weights = cv.groupRectangles(bbox + bbox, groupThreshold=1, eps=0.2)
+    LOG.info(f"Combined {len(bbox) - len(grouped_bbox)} duplicate bounding boxes")
+    proc_img.metadata["bbox"] = grouped_bbox
+    return proc_img
+
+
 def improve_bbox(proc_img: ProcessedImage, store_components=True) -> ProcessedImage:
     """Use the initial bbox hypothesis to generate an NxN grid of bboxes."""
     bboxen = proc_img.metadata["bbox"]
-    proc_img.overlay = proc_img.orig.copy()
+    proc_img.img = proc_img.orig.copy()
     bbox_w_h = int(1.15 * np.median([(br[2], br[3]) for br in bboxen]))
     # Set all bbox dimensions to median dimension + 15%
     def scale_around_centroid(bbin, newlen):
         x, y, w, h = bbin
-        cx, cy = int(x + w/2), int(y + h/2)
-        return (max(cx - newlen//2, 0), max(cy - newlen//2, 0), newlen, newlen)
+        cx, cy = int(x + w / 2), int(y + h / 2)
+        return (max(cx - newlen // 2, 0), max(cy - newlen // 2, 0), newlen, newlen)
+
     newbbs = [scale_around_centroid(bb, bbox_w_h) for bb in bboxen]
     meta = {"improved_bbox": newbbs}
     for x, y, w, h in newbbs:
         LOG.debug(f"Storing component xywh {x} {y} {w} {h}")
-        cv.rectangle(proc_img.overlay, (x, y), (x + w, y + h), (200, 0, 0), 2)
+        cv.rectangle(proc_img.img, (x, y), (x + w, y + h), (200, 0, 0), 2)
 
     if store_components:
-        meta["img_improved_bbox"] = [proc_img.orig[y : y+ h, x : x + w] for x, y, w, h in newbbs]
+        meta["img_improved_bbox"] = [proc_img.orig[y : y + h, x : x + w] for x, y, w, h in newbbs]
 
     proc_img.metadata.update(meta)
     return proc_img
+
+
+def outlier_reject(proc_img: ProcessedImage) -> ProcessedImage:
+    from sklearn.covariance import EllipticEnvelope
+
+    bboxen = proc_img.metadata["bbox"]
+    bbox_xy = [(x, y) for x, y, _, __ in bboxen]
+    cov = EllipticEnvelope().fit(bbox_xy)
+    fit = cov.predict(bbox_xy)
+    LOG.debug(f"Outlier predictions: {fit}")
+    LOG.debug(f"Not performing outlier rejection because it is not yet trustworthy. Maybe we don't need it.")
+    return proc_img
+
+
+def reshape_from_bbox_bounds(proc_img: ProcessedImage) -> ProcessedImage:
+    bboxen = proc_img.metadata["improved_bbox"]
+    top_left = min(bboxen, key=lambda p: p[0] + p[1])
+    bot_right = max(bboxen, key=lambda p: p[0] + p[1] + p[2] + p[3])
+    bot_left = max(bboxen, key=lambda p: p[1] + p[3] - p[0])
+    top_right = max(bboxen, key=lambda p: p[0] + p[2] - p[1])
+    for x, y, w, h in top_left, bot_right, bot_left, top_right:
+        cv.rectangle(proc_img.img, (x, y), (x + w, y + h), (200, 0, 0), 8)
+    top_left = (top_left[0], top_left[1])
+    bot_right = (bot_right[0] + bot_right[2], bot_right[1] + bot_right[3])
+    bot_left = (bot_left[0], bot_left[1] + bot_left[3])
+    top_right = (top_right[0] + top_right[2], top_right[1])
+    mindim = min(np.shape(proc_img.orig))
+    tl, br, tr, bl = (0, 0), (mindim, mindim), (mindim, 0), (0, mindim)
+    transorm = cv.getPerspectiveTransform(
+        np.float32((top_left, top_right, bot_left, bot_right)), np.float32((tl, tr, bl, br))
+    )
+    transformed = cv.warpPerspective(proc_img.orig, transorm, (mindim, mindim))
+    proc_img.img = transformed
+    return proc_img
+    # LOG.debug(f"Bounds: ")
+
+
+def gridify(proc_img: ProcessedImage) -> ProcessedImage:
+    """Take a rectified + cropped ProcessedImage and fit an NxN grid, N == 4, 5, or 6 based on num bboxes."""
+    nguess = min([4, 5, 6], key=lambda n: abs(n * n - len(proc_img.metadata["improved_bbox"])))
+    LOG.info(f"Guessing that this is {nguess} x {nguess} board")
+    return proc_img
+
 
 # Aborted attempt at using pytesseract
 # def chars_from_bbox(proc_img: ProcessedImage) -> ProcessedImage:
@@ -123,7 +183,14 @@ def improve_bbox(proc_img: ProcessedImage, store_components=True) -> ProcessedIm
 
 
 PREPROC_PIPELINE: List[callable] = [bw, expand, invert, threshold, open_close]
-EXTRACT_PIPELINE: List[callable] = [bbox, improve_bbox]
+EXTRACT_PIPELINE: List[callable] = [
+    bbox,
+    outlier_reject,
+    combine_overlapping_bbox,
+    improve_bbox,
+    reshape_from_bbox_bounds,
+    gridify,
+]
 
 
 def compose(*functions):
@@ -135,13 +202,12 @@ def preproc(imgs: Iterable[np.ndarray]) -> Iterable[np.ndarray]:
         yield compose(*PREPROC_PIPELINE)(img)
 
 
-
-def write_proc_images(imgs: Iterable[ProcessedImage], output_root: str= DEBUG_OUT):
+def write_proc_images(imgs: Iterable[ProcessedImage], output_root: str = DEBUG_OUT):
     for i, proc in enumerate(imgs):
         this_root = os.path.join(output_root, f"{i:03d}")
         Path(this_root).mkdir(parents=True, exist_ok=True)
         cv.imwrite(os.path.join(this_root, "orig.jpg"), proc.orig)
-        cv.imwrite(os.path.join(this_root, "overlay.jpg"), proc.overlay)
+        cv.imwrite(os.path.join(this_root, "processed.jpg"), proc.img)
         for meta_key, meta_val in proc.metadata.items():
             if meta_key.startswith("img_"):
                 feat_root = os.path.join(this_root, meta_key)
@@ -158,7 +224,7 @@ def extract(imgs: Iterable[np.ndarray], store_components=True) -> Iterable[Proce
         for extract_step in EXTRACT_PIPELINE:
             this_proc = extract_step(proc)
             if store_components:
-                cv.imwrite(os.path.join(DEBUG_OUT, f"{i:03d}_{extract_step.__name__}.jpg"), this_proc.overlay)
+                cv.imwrite(os.path.join(DEBUG_OUT, f"{i:03d}_{extract_step.__name__}.jpg"), this_proc.img)
             # proc.metadata.update(this_proc.metadata)
             proc = this_proc
         yield proc
