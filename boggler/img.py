@@ -1,6 +1,7 @@
 import functools
 import logging
 import os
+from itertools import combinations, product
 from pathlib import Path
 from typing import List, Iterable
 
@@ -170,8 +171,14 @@ def gridify(proc_img: ProcessedImage) -> ProcessedImage:
     """Take a rectified + cropped ProcessedImage and fit an NxN grid, N == 4, 5, or 6 based on num bboxes."""
     nguess = min([4, 5, 6], key=lambda n: abs(n * n - len(proc_img.metadata["improved_bbox"])))
     LOG.info(f"Guessing that this is {nguess} x {nguess} board")
-    imsize = np.shape(proc_img.img)[0] # must be square image by this point
+    imsize = np.shape(proc_img.img)[0]  # must be square image by this point
     gridspace = imsize // nguess
+    # Write our features
+    for x, y in product(list(range(nguess)), list(range(nguess))):
+        proc_img.metadata[f"img_feat_{y}{x}"] = [proc_img.img[
+            x * gridspace : (x + 1) * gridspace, y * gridspace : (y + 1) * gridspace
+        ].copy()]
+    # Generate a grid overlay
     for x in range(0, imsize, gridspace):
         cv.line(proc_img.img, (x, 0), (x, imsize), color=(200, 0, 0), thickness=6)
     for y in range(0, imsize, gridspace):
@@ -247,7 +254,9 @@ def extract(imgs: Iterable[np.ndarray], store_components=True) -> Iterable[Proce
         for j, extract_step in enumerate(EXTRACT_PIPELINE):
             this_proc = extract_step(proc)
             if store_components:
-                cv.imwrite(os.path.join(DEBUG_OUT, f"{i:03d}_{j:02d}_{extract_step.__name__}.jpg"), this_proc.img)
+                cv.imwrite(
+                    os.path.join(DEBUG_OUT, f"{i:03d}_{j:02d}_{extract_step.__name__}.jpg"), this_proc.img
+                )
             # proc.metadata.update(this_proc.metadata)
             proc = this_proc
         yield proc

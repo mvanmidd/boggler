@@ -56,8 +56,33 @@ And use cv.wrapPerspective to make a new square image (with dimensions based on 
 dimensions of the input image) containing only our boggle board:
 ![reshape](static/img/000_04_reshape_from_bbox_bounds.jpg)
 
-Finally, we guess at the board size (4, 5, or 6x6 boggle) and gridify the reshaped image:
-![reshape](static/img/000_05_gridify.jpg)
+Then, using the number of pruned bounding boxes, we guess at the board size (4, 5, or 6x6 boggle)
+ and gridify the reshaped image:
+![gridify](static/img/000_05_gridify.jpg)
+
+Finally, we extract the individual grid cells and write them as images in `debug/{img_number}/img_feat_{y}{x}.jpg`
+![gridfeat](static/img/gridfeat.jpg)
+
+## Data labeling
+
+OK, we have a bunch of clean-ish images of characters. Now it's time to generate some ground truth
+training and evaluation data for our model.
+
+To run annotation on a set of features, first copy the features into the `groundtruth` directory, then run
+
+    boggler annotate
+
+This will display each image from a recursive traversal of `groundtruth/*`, waiting for a keypress. Press the key corresponding to the
+letter on the cube. Use lowercase letters for normal (single-letter) cubes, "E" for the "Er" cube,
+"q" (lowercase) for the "Qu" cube, "!" for the "black box" cube (6x6 only), and "?" if you don't recognize 
+the cube.
+
+For each image `groundtruth/path/to/img.jpg`, the annotation will be written to `groundtruth/path/to/img.label`.
+
+You should probably split images into train, dev, and test images, and put each of them in a subdirectory
+of `groundtruth`.
+
+
 
 ### Character classification
 
