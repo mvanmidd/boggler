@@ -12,6 +12,10 @@ GROUND_TRUTH = "groundtruth"
 FEATURES = "features"
 
 
+LABELS = ["in", "he", "th", "er", "qu", "an", "!", "?"]  + list(c for c in string.ascii_lowercase if c != "q")
+LABELS_KEYSTROKES = {"I": "in", "H": "he", "T": "th", "E": "er", "Q": "qu", "A": "an", "!": "!", "?": "?"}
+LABELS_KEYSTROKES.update({k: k for k in string.ascii_lowercase if k != "q"})
+
 def read_images(root=IMG_IN, partition="", ground_truth=False) -> Generator:
     for dirpath, dnames, fnames in os.walk(os.path.join(root, partition)):
         for fname in fnames:
@@ -20,7 +24,7 @@ def read_images(root=IMG_IN, partition="", ground_truth=False) -> Generator:
                 continue
             if ground_truth:
                 raise NotImplementedError()
-            yield cv.imread(fpath)
+            yield os.path.basename(fname), cv.imread(fpath)
 
 
 
@@ -30,10 +34,6 @@ class ProcessedImage:
     img: np.ndarray = attr.ib()
     metadata: dict = attr.ib(factory=dict)
 
-
-LABELS = ["in", "he", "th", "er", "qu", "an", "!", "?"]  + list(c for c in string.ascii_lowercase if c != "q")
-LABELS_KEYSTROKES = {"I": "in", "H": "he", "T": "th", "E": "er", "Q": "qu", "A": "an", "!": "!", "?": "?"}
-LABELS_KEYSTROKES.update({k: k for k in string.ascii_lowercase if k != "q"})
 
 @attr.s()
 class LabeledExample:
@@ -45,8 +45,8 @@ class LabeledExample:
         if not (value is None or value in LABELS):
             raise ValueError(f"Unknown label {value}")
 
-def walk_ground_truth(root=GROUND_TRUTH):
-    for dirpath, dnames, fnames in os.walk(root):
+def walk_ground_truth(root=GROUND_TRUTH, partition=""):
+    for dirpath, dnames, fnames in os.walk(os.path.join(root, partition)):
         for f in fnames:
             if f.endswith(".jpg"):
                 gt_name = os.path.splitext(f)[0] + ".label"
@@ -55,8 +55,8 @@ def walk_ground_truth(root=GROUND_TRUTH):
                 yield (im_path, gt_path)
 
 
-def read_ground_truth(root=GROUND_TRUTH):
-    for im_path, gt_path in walk_ground_truth(root):
+def read_ground_truth(root=GROUND_TRUTH, partition=""):
+    for im_path, gt_path in walk_ground_truth(root, partition):
         gt = None
         if os.path.exists(gt_path):
             with open(gt_path) as gtin:

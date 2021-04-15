@@ -3,7 +3,7 @@ import logging
 import os
 from itertools import combinations, product
 from pathlib import Path
-from typing import List, Iterable
+from typing import List, Iterable, Tuple
 
 import cv2 as cv
 import numpy as np
@@ -12,7 +12,7 @@ from boggler.data import DEBUG_OUT, ProcessedImage, FEATURES
 
 PIX_CONSTANTS = {
     "open_close_kernel": 5,
-    "bbox_min": 240,
+    "bbox_min": 140,
     "bbox_max": 640,
     "local_contrast_window_size": 500,
     "median_blur_kernel_size": 19,
@@ -41,17 +41,17 @@ LOG = logging.getLogger(__name__)
 def grayscale(img: np.ndarray) -> np.ndarray:
     return cv.cvtColor(img, cv.COLOR_BGR2GRAY)
 
-def crop_square(img:np.ndarray) -> np.ndarray:
+
+def crop_square(img: np.ndarray) -> np.ndarray:
     """Crop an image to sqaure along the shorter dimension, centering along longer dimension."""
     s = img.shape
     if s[0] > s[1]:
         offset = (s[0] - s[1]) // 2
-        img = img[offset: offset + s[1], :]
+        img = img[offset : offset + s[1], :]
     if s[0] < s[1]:
         offset = (s[1] - s[0]) // 2
-        img = img[:, offset: offset + s[0]]
+        img = img[:, offset : offset + s[0]]
     return img
-
 
 
 def median_blur(img: np.ndarray) -> np.ndarray:
@@ -66,9 +66,11 @@ def adaptive_contrast(img: np.ndarray) -> np.ndarray:
     cl1 = clahe.apply(img)
     return cl1
 
+
 def invert(img: np.ndarray) -> np.ndarray:
     """Invert black-on-white boggle text to white-on-black."""
     return cv.bitwise_not(img)
+
 
 def threshold(img: np.ndarray) -> np.ndarray:
     """Threshold a white-on-black image to binary"""
@@ -104,10 +106,7 @@ def bbox_board(proc_img: ProcessedImage, store_components=True) -> ProcessedImag
         #     LOG.debug(f"Skipping bbox {idx}, parent {parent} already in set")
         #     continue
         x, y, w, h = cv.boundingRect(cnt)
-        if True or (
-                w > imsize[1] * .5
-                and h > imsize[0] * .4
-        ):
+        if True or (w > imsize[1] * 0.5 and h > imsize[0] * 0.4):
             bboxen.append(cv.boundingRect(cnt))
             added.add(idx)
             if store_components:
@@ -117,6 +116,7 @@ def bbox_board(proc_img: ProcessedImage, store_components=True) -> ProcessedImag
     if store_components:
         meta["img_bbox"] = components
     return ProcessedImage(img, overlay, meta)
+
 
 def bbox(proc_img: ProcessedImage, store_components=True) -> ProcessedImage:
     img = proc_img.orig
@@ -205,12 +205,14 @@ def outlier_reject_elliptic(proc_img: ProcessedImage) -> ProcessedImage:
     LOG.debug(f"Not performing outlier rejection because it is not yet trustworthy. Maybe we don't need it.")
     return proc_img
 
+
 def outlier_reject_manhattan(proc_img: ProcessedImage) -> ProcessedImage:
     from sklearn.neighbors import LocalOutlierFactor
+
     bboxen = proc_img.metadata["bbox"]
     # bbox_xy = [(x, y) for x, y, _, __ in bboxen]
     bbox_xy = bboxen
-    clf = LocalOutlierFactor(n_neighbors=10, metric='l1')
+    clf = LocalOutlierFactor(n_neighbors=10, metric="l1")
     fit = clf.fit_predict(bbox_xy)
     inlier_bboxen = [bboxen[i] for i, v in enumerate(fit) if v == 1]
     outlier_bboxen = [bboxen[i] for i, v in enumerate(fit) if v == -1]
@@ -222,6 +224,7 @@ def outlier_reject_manhattan(proc_img: ProcessedImage) -> ProcessedImage:
     for x, y, w, h in outlier_bboxen:
         cv.rectangle(proc_img.img, (x, y), (x + w, y + h), (200, 0, 0), 14)
     return proc_img
+
 
 def square_crop_from_bbox_bounds(proc_img: ProcessedImage) -> ProcessedImage:
     bboxen = proc_img.metadata["improved_bbox"]
@@ -247,6 +250,7 @@ def square_crop_from_bbox_bounds(proc_img: ProcessedImage) -> ProcessedImage:
     transformed = cv.warpPerspective(proc_img.orig, transorm, (mindim, mindim))
     proc_img.img = transformed
     return proc_img
+
 
 def reshape_from_bbox_bounds(proc_img: ProcessedImage) -> ProcessedImage:
     bboxen = proc_img.metadata["improved_bbox"]
@@ -278,10 +282,19 @@ def gridify(proc_img: ProcessedImage) -> ProcessedImage:
     imsize = np.shape(proc_img.img)[0]  # must be square image by this point
     gridspace = imsize // nguess
     # Write our features
+    new_bbox = []
+    new_bbim = []
     for x, y in product(list(range(nguess)), list(range(nguess))):
+        new_bbim.append(
+            proc_img.img[x * gridspace : (x + 1) * gridspace, y * gridspace : (y + 1) * gridspace].copy()
+        )
         proc_img.metadata[f"img_feat_{y}{x}"] = [
             proc_img.img[x * gridspace : (x + 1) * gridspace, y * gridspace : (y + 1) * gridspace].copy()
         ]
+        new_bbox.append((x, y, gridspace, gridspace))
+    proc_img.metadata["grid_bbox"] = new_bbox
+    proc_img.metadata["img_grid_bbox"] = new_bbim
+
     # Generate a grid overlay
     for x in range(0, imsize, gridspace):
         cv.line(proc_img.img, (x, 0), (x, imsize), color=(200, 0, 0), thickness=6)
@@ -289,15 +302,32 @@ def gridify(proc_img: ProcessedImage) -> ProcessedImage:
         cv.line(proc_img.img, (0, y), (imsize, y), color=(200, 0, 0), thickness=6)
     return proc_img
 
+def floodfill_outside(proc_img: ProcessedImage) -> ProcessedImage:
+    """Floodfill starting at all white points along outside of image"""
+    grid_bb = proc_img.metadata["img_grid_bbox"]
+    bbsize = proc_img.metadata["img_grid_bbox"][0].shape[0]
+    print(grid_bb[0].shape)
+    for bbi in grid_bb:
+        ffilled = bbi
+        for ffpoint in range(bbsize):
+            for pt in [(0, ffpoint), (bbsize-1, ffpoint), (ffpoint, bbsize-1), (ffpoint, 0)]:
+                if ffilled[pt] != 0:
+                    print(f"Filling from {pt}")
+                    cv.floodFill(ffilled, None, (pt[1], pt[0]), 0, flags=8)
+        cv.imshow("display", ffilled)
+        cv.waitKey(0)
+    return proc_img
+
+
 
 def houghlines(proc_img: ProcessedImage) -> ProcessedImage:
     imsi = proc_img.img.shape
-    downs = cv.resize(proc_img.img, (int(imsi[1] * .3), int(imsi[0] * .3)))
+    downs = cv.resize(proc_img.img, (int(imsi[1] * 0.3), int(imsi[0] * 0.3)))
 
     minLineLength = 100
     maxLineGap = 20
     edges = cv.Canny(downs, 50, 150, apertureSize=3)
-    lines = cv.HoughLinesP(edges, .1, np.pi / 180, 100, minLineLength, maxLineGap)
+    lines = cv.HoughLinesP(edges, 0.1, np.pi / 180, 100, minLineLength, maxLineGap)
     for x1, y1, x2, y2 in lines[0]:
         cv.line(downs, (x1, y1), (x2, y2), (200, 5, 0), 30)
     #
@@ -317,6 +347,7 @@ def houghlines(proc_img: ProcessedImage) -> ProcessedImage:
     proc_img.img = downs
     return proc_img
 
+
 outlier_reject = outlier_reject_manhattan
 
 if HOUGHLINES:
@@ -326,12 +357,28 @@ if HOUGHLINES:
         houghlines,
     ]
 elif DETECT_BOARD:
-    PREPROC_PIPELINE: List[callable] = [grayscale, median_blur, adaptive_contrast, invert, threshold, open_close]
+    PREPROC_PIPELINE: List[callable] = [
+        grayscale,
+        median_blur,
+        adaptive_contrast,
+        invert,
+        threshold,
+        open_close,
+    ]
     EXTRACT_PIPELINE: List[callable] = [
         bbox_board,
     ]
 else:
-    PREPROC_PIPELINE: List[callable] = [grayscale, crop_square, median_blur, adaptive_contrast, invert, threshold, open_close]
+    PREPROC_PIPELINE: List[callable] = [
+        grayscale,
+        crop_square,
+        median_blur,
+        # Too aggressive
+        # adaptive_contrast,
+        invert,
+        threshold,
+        open_close,
+    ]
     EXTRACT_PIPELINE: List[callable] = [
         bbox,
         improve_bbox,
@@ -341,13 +388,15 @@ else:
         # reshape_from_bbox_bounds,
         square_crop_from_bbox_bounds,
         gridify,
+        floodfill_outside,
     ]
+
 
 def compose(*functions):
     return functools.reduce(lambda f, g: lambda x: f(g(x)), reversed(functions), lambda x: x)
 
 
-def preproc(imgs: Iterable[np.ndarray], store_components=False) -> Iterable[np.ndarray]:
+def preproc(imgs: Iterable[Tuple[str, np.ndarray]], store_components=False) -> Iterable[Tuple[str, np.ndarray]]:
     if store_components:
         yield from _preproc_debug(imgs)
     else:
@@ -355,23 +404,25 @@ def preproc(imgs: Iterable[np.ndarray], store_components=False) -> Iterable[np.n
             yield compose(*PREPROC_PIPELINE)(img)
 
 
-def _preproc_debug(imgs: Iterable[np.ndarray], output_root: str = DEBUG_OUT) -> Iterable[np.ndarray]:
-    for i, img in enumerate(imgs):
+def _preproc_debug(imgs: Iterable[Tuple[str, np.ndarray]], output_root: str = DEBUG_OUT) -> Iterable[np.ndarray]:
+    for i, imgf in enumerate(imgs):
+        fname, img = imgf
         this_root = os.path.join(output_root, f"{i:03d}", "preprocessing")
         Path(this_root).mkdir(parents=True, exist_ok=True)
         cv.imwrite(os.path.join(this_root, "orig.jpg"), img)
         for j, preproc_step in enumerate(PREPROC_PIPELINE):
             img = preproc_step(img)
             cv.imwrite(os.path.join(this_root, f"preproc_{j:02d}_{preproc_step.__name__}.jpg"), img)
-        yield img
+        yield fname, img
 
 
 def write_proc_images(
-    imgs: Iterable[ProcessedImage], feat_output_root: str = FEATURES, debug_output_root: str = DEBUG_OUT
-):
-    for i, proc in enumerate(imgs):
-        debug_root = os.path.join(debug_output_root, f"{i:03d}")
-        feat_root = os.path.join(feat_output_root, f"{i:03d}")
+    imgs: Iterable[Tuple[str, ProcessedImage]], feat_output_root: str = FEATURES, debug_output_root: str = DEBUG_OUT
+) -> Tuple[str, ProcessedImage]:
+    for i, procf in enumerate(imgs):
+        fname, proc = procf
+        debug_root = os.path.join(debug_output_root, f"{i:03d}_{fname}")
+        feat_root = os.path.join(feat_output_root, f"{i:03d}_{fname}")
         Path(debug_root).mkdir(parents=True, exist_ok=True)
         Path(feat_root).mkdir(parents=True, exist_ok=True)
         cv.imwrite(os.path.join(debug_root, "orig.jpg"), proc.orig)
@@ -387,18 +438,19 @@ def write_proc_images(
                 for j, component in enumerate(meta_val):
                     thisout = os.path.join(debug_feat_root, f"{j:03d}.jpg")
                     cv.imwrite(thisout, component)
-        yield proc
+        yield fname, proc
 
 
-def extract(imgs: Iterable[np.ndarray], store_components=True) -> Iterable[ProcessedImage]:
-    for i, img in enumerate(imgs):
+def extract(imgs: Iterable[Tuple[str, np.ndarray]], store_components=True) -> Iterable[Tuple[str, ProcessedImage]]:
+    for i, imgf in enumerate(imgs):
+        fname, img = imgf
         proc = ProcessedImage(img, img, {})
         for j, extract_step in enumerate(EXTRACT_PIPELINE):
             this_proc = extract_step(proc)
             if store_components:
                 cv.imwrite(
-                    os.path.join(DEBUG_OUT, f"{i:03d}_{j:02d}_{extract_step.__name__}.jpg"), this_proc.img
+                    os.path.join(DEBUG_OUT, f"{i:03d}_{fname}_{j:02d}_{extract_step.__name__}.jpg"), this_proc.img
                 )
             # proc.metadata.update(this_proc.metadata)
             proc = this_proc
-        yield proc
+        yield fname, proc

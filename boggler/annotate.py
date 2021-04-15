@@ -11,6 +11,9 @@ from .data import LabeledExample, GROUND_TRUTH, LABELS, LABELS_KEYSTROKES, walk_
 
 LOG = logging.getLogger(__name__)
 
+class DeleteLastException(Exception):
+    pass
+
 def anno_single(example: np.ndarray) -> LabeledExample:
     cv.imshow("Display window", example)
     k = cv.waitKey(0)
@@ -19,15 +22,24 @@ def anno_single(example: np.ndarray) -> LabeledExample:
     else:
         c = chr(k)
         if c not in LABELS_KEYSTROKES:
-            print(f"Char '{c}' (code {k}) not recognized")
+            raise ValueError(f"Char '{c}' (code {k}) not recognized")
+        if c == 8:
+            raise DeleteLastException("User made a mistake, delete last annotation")
         return LabeledExample(example, LABELS_KEYSTROKES[c])
 
 def label_all(root=GROUND_TRUTH, overwrite = False):
+    lastwritten = None
     for im_path, gt_path in walk_ground_truth(root=root):
         if os.path.exists(gt_path) and not overwrite:
             LOG.debug(f"GT label for {im_path} already exists at {gt_path}; skipping")
         else:
-            example = anno_single(cv.imread(im_path))
+            try:
+                example = anno_single(cv.imread(im_path))
+            except DeleteLastException:
+                LOG.info(f"Deleting {lastwritten}")
+                os.remove(lastwritten)
+                example = anno_single(cv.imread(im_path))
             with open(gt_path, "w") as gtfp:
                 gtfp.write(example.label)
+                lastwritten = gt_path
 
